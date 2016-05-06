@@ -49,6 +49,12 @@ module Batsd
       @redis.zadd key, timestamp, "#{timestamp}<X>#{value}"
     end
 
+    # Store a gauge to a zset
+    #
+    def store_gauge(timestamp, key, value)
+      @redis.zadd key, timestamp, "#{timestamp}<X>#{value}"      
+    end
+
     # Store unaggregated, raw timer values in bucketed keys
     # so that they can actually be aggregated "raw"
     #

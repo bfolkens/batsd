@@ -35,6 +35,7 @@ module Batsd
         value = "#{timestamp} #{value}"
         key   = "gauges:#{key}"
         @diskstore.append_value_to_file(@diskstore.build_filename(key), value)
+        @redis.store_gauge(timestamp, key, value)
         @redis.add_datapoint key
       end
     end
