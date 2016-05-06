@@ -32,9 +32,8 @@ module Batsd
         if sample_rate
           value = value.to_f / sample_rate.gsub("@", "").to_f
         end
-        value = "#{timestamp} #{value}"
-        key   = "gauges:#{key}"
-        @diskstore.append_value_to_file(@diskstore.build_filename(key), value)
+        key = "gauges:#{key}"
+        @diskstore.append_value_to_file(@diskstore.build_filename(key), "#{timestamp} #{value}")
         @redis.store_gauge(timestamp, key, value)
         @redis.add_datapoint key
       end
