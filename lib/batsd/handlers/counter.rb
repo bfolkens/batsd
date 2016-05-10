@@ -100,16 +100,8 @@ module Batsd
                     values = values.collect(&:to_f)
                     count = values.count
                     puts "Writing the aggregates for #{count} values for #{key} at the #{retention} level." if ENV["VVERBOSE"]
-                    ["mean", "count", "min", "max", ["upper_90", "percentile_90"], ["stddev", "standard_dev"]].each do |aggregation|
-                      if aggregation.is_a? Array
-                        name = aggregation[0]
-                        aggregation = aggregation[1]
-                      else
-                        name = aggregation
-                      end
-                      val = (count > 1 ? values.send(aggregation.to_sym) : values.first)
-                      @redis.store_value timestamp, "#{key}:#{name}:#{retention}", val
-                    end
+                    val = (count > 1 ? values.sum : values.first)
+                    @redis.store_value timestamp, "#{key}:#{retention}", val
                   end
                 end
               end
