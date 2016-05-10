@@ -10,12 +10,10 @@ module Batsd
     # Set up a new handler to handle counters
     #
     # * Set up a redis client
-    # * Set up a diskstore client to write aggregates to disk
     # * Initialize last flush timers to now
     #
     def initialize(options)
       @redis = Batsd::Redis.new(options)
-      @diskstore = Batsd::Diskstore.new(options[:root])
       @counters = @active_counters = {}
       @retentions = options[:retentions].keys
       @flush_interval = @retentions.first
@@ -50,9 +48,10 @@ module Batsd
     # update all of the counters for all of the aggregations in Redis
     #
     # <code>flush</code> is also used to write the latter aggregations from
-    # redis to disk. It does this by tracking the last time they were written.
-    # If that was a sufficient time ago, the value will be retrieved from
-    # redis, cleared, and written to disk in another thread.
+    # redis to an aggregate entry. It does this by tracking the last time
+    # they were written. If that was a sufficient time ago, the value will
+    # be retrieved from redis, cleared, and written to an aggregate in
+    # another thread.
     #
     # When the last level of aggregation (least granularity) is written,
     # the <code>@counters</code> will be flushed to the 'datapoints' set in
@@ -73,7 +72,8 @@ module Batsd
         counters.each_slice(50) do |keys|
           @threadpool.queue ts, keys do |timestamp, keys|
             keys.each do |key, value|
-              @redis.store_and_update_all_counters(timestamp, key, value)
+              @redis.store_value timestamp, key, value
+              @redis.store_for_aggregations key, value
             end
           end
         end
@@ -81,34 +81,42 @@ module Batsd
       puts "Flushed #{n} counters in #{t.real} seconds" if ENV["VERBOSE"]
 
       
-      # If it's time for the latter aggregation to be written to disk, queue
-      # those up
+      # If it's time for the latter aggregation to be written, queue those up
       @retentions.each_with_index do |retention, index|
         # First retention is always just flushed to redis on the flush interval
         next if index.zero?
 
-        # Only if we're in need of a write to disk - if the next flush will be
+        # Only if we're in need of a write - if the next flush will be
         # past the threshold
         if (flush_start + @flush_interval) > @last_flushes[retention] + retention.to_i
-          puts "Starting disk writing for timers@#{retention}" if ENV["VERBOSE"]
+          puts "Starting writing for counters@#{retention}" if ENV["VERBOSE"]
           t = Benchmark.measure do 
             ts = (flush_start - flush_start % retention.to_i)
-            counters = @counters.dup
-            counters.keys.each_slice(400) do |keys|
+            @counters.keys.each_slice(400) do |keys|
               @threadpool.queue ts, keys, retention do |timestamp, keys, retention|
                 keys.each do |key|
-                  key = "#{key}:#{retention}"
-                  value = @redis.get_and_clear_key(key)
-                  if value
-                    value = "#{ts} #{value}"
-                    @diskstore.append_value_to_file(@diskstore.build_filename(key), value)
+                  values = @redis.pop_for_aggregations(key, retention)
+                  if values
+                    values = values.collect(&:to_f)
+                    count = values.count
+                    puts "Writing the aggregates for #{count} values for #{key} at the #{retention} level." if ENV["VVERBOSE"]
+                    ["mean", "count", "min", "max", ["upper_90", "percentile_90"], ["stddev", "standard_dev"]].each do |aggregation|
+                      if aggregation.is_a? Array
+                        name = aggregation[0]
+                        aggregation = aggregation[1]
+                      else
+                        name = aggregation
+                      end
+                      val = (count > 1 ? values.send(aggregation.to_sym) : values.first)
+                      @redis.store_value timestamp, "#{key}:#{name}:#{retention}", val
+                    end
                   end
                 end
               end
             end
             @last_flushes[retention] = flush_start
           end
-          puts "#{Time.now}: Handled disk writing for counters@#{retention} in #{t.real}" if ENV["VERBOSE"]
+          puts "#{Time.now}: Handled writing for counters@#{retention} in #{t.real}" if ENV["VERBOSE"]
 
           # If this is the last retention we're handling, flush the
           # counters list to redis and reset it

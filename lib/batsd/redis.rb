@@ -21,53 +21,27 @@ module Batsd
       @redis
     end
 
-    # Store a counter measurement for each of the specified retentions
-    #
-    # * For shortest retention (where timestep == flush interval), add the
-    #   value and timestamp to the appropriate zset
-    #
-    # * For longer retention intervals, increment the appropriate counter
-    #   by the value specified.
-    #
-    # TODO: This can be done in a single network request by rewriting
-    # it as a redis script in Lua
-    #
-    def store_and_update_all_counters(timestamp, key, value)
-      @retentions.each_with_index do |t, index|
-        if index.zero?
-          @redis.zadd key, timestamp, "#{timestamp}<X>#{value}"
-        else
-          @redis.incrby "#{key}:#{t}", value
-          @redis.expire "#{key}:#{t}", t.to_i * 2
-        end
-      end
-    end
-
-    # Store a timer to a zset
-    #
-    def store_timer(timestamp, key, value)
-      @redis.zadd key, timestamp, "#{timestamp}<X>#{value}"
-    end
-
-    # Store a gauge to a zset
-    #
-    def store_gauge(timestamp, key, value)
-      @redis.zadd key, timestamp, "#{timestamp}<X>#{value}"      
+    # Store a value to a zset
+    def store_value(timestamp, key, value)
+      @redis.zadd key, timestamp, value
     end
 
     # Store unaggregated, raw timer values in bucketed keys
     # so that they can actually be aggregated "raw"
-    #
-    # The set of tiemrs are stored as a single string key delimited by 
-    # \x0. In benchmarks, this is more efficient in memory by 2-3x, and
-    # less efficient in time by ~10%
-    #
-    # TODO: can this be done more efficiently with redis scripting?
-    def store_raw_timers_for_aggregations(key, values)
+    def store_for_aggregations(key, values)
       @retentions.each_with_index do |t, index|
         next if index.zero?
-        @redis.append "#{key}:#{t}", "<X>#{values.join("<X>")}"
-        @redis.expire "#{key}:#{t}", t.to_i * 2
+        @redis.sadd "acc-#{key}:#{t}", values
+        @redis.expire "acc-#{key}:#{t}", t.to_i * 2
+      end
+    end
+
+    # Pop all the raw members from the set for aggregation
+    def pop_for_aggregations(key, retention)
+      [].tap do |values|
+        while value = @redis.spop("acc-#{key}:#{retention}")
+          values << value
+        end
       end
     end
     
@@ -93,28 +67,6 @@ module Batsd
       @redis.del(key)
     end
     
-    # Create an array out of a string of values delimited by <X>
-    def extract_values_from_string(key)
-      if @lua_support
-        cmd = <<-EOF
-          local t={} ; local i=1
-          local str = redis.call('get', KEYS[1])
-          if (str) then
-            for s in string.gmatch(str, "([^".."<X>".."]+)") do
-              t[i] = s
-              i = i + 1
-            end
-            redis.call('del', KEYS[1])
-          end
-          return t
-        EOF
-        @redis.eval(cmd, [key.to_sym])
-      else
-        values = get_and_clear_key(key)
-        values.split('<X>') if values
-      end
-    end
-
     # Truncate a zset since a treshold time
     #
     def truncate_zset(key, since)
@@ -124,8 +76,8 @@ module Batsd
     # Return properly formatted values from the zset
     def values_from_zset(metric, begin_ts, end_ts)
       begin
-        values = @redis.zrangebyscore(metric, begin_ts, end_ts)
-        values.collect{|val| ts, val = val.split("<X>"); {timestamp: ts.to_i, value: val.to_f } }
+        values = @redis.zrangebyscore(metric, begin_ts, end_ts, with_scores: true)
+        values.collect {|val, ts| { timestamp: ts.to_i, value: val.to_f }}
       rescue
         []
       end

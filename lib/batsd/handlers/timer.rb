@@ -10,12 +10,10 @@ module Batsd
     # Set up a new handler to handle timers
     #
     # * Set up a redis client
-    # * Set up a diskstore client to write aggregates to disk
     # * Initialize last flush timers to now
     #
     def initialize(options)
       @redis = Batsd::Redis.new(options)
-      @diskstore = Batsd::Diskstore.new(options[:root])
       @retentions = options[:retentions].keys
       @flush_interval = @retentions.first
       @active_timers = {}
@@ -39,11 +37,11 @@ module Batsd
       end
     end
 
-    # Flush timers to redis and disk.
+    # Flush timers to redis.
     #
     # 1) At every flush interval, flush to redis and clear active timers. Also
     #    store raw values for usage later.
-    # 2) If time since last disk write for a given aggregation, flush to disk.
+    # 2) If time since last write for a given aggregation, flush.
     # 3) If flushing the terminal aggregation, flush the set of datapoints to
     #    Redis and reset that tracking in process.
     #
@@ -65,40 +63,40 @@ module Batsd
               puts "Storing #{values.size} values to redis for #{key} at #{timestamp}" if ENV["VVERBOSE"]
               # Store all the aggregates for the flush interval level
               count = values.count
-              @redis.store_timer timestamp, "#{key}:mean", values.mean
-              @redis.store_timer timestamp, "#{key}:count", count 
-              @redis.store_timer timestamp, "#{key}:min", values.min
-              @redis.store_timer timestamp, "#{key}:max", values.max
-              @redis.store_timer timestamp, "#{key}:upper_90", values.percentile_90
+              @redis.store_value timestamp, "#{key}:mean", values.mean
+              @redis.store_value timestamp, "#{key}:count", count 
+              @redis.store_value timestamp, "#{key}:min", values.min
+              @redis.store_value timestamp, "#{key}:max", values.max
+              @redis.store_value timestamp, "#{key}:upper_90", values.percentile_90
               if count > 1
-                @redis.store_timer timestamp, "#{key}:stddev", values.standard_dev
+                @redis.store_value timestamp, "#{key}:stddev", values.standard_dev
               end
-              @redis.store_raw_timers_for_aggregations key, values
+              @redis.store_for_aggregations key, values
             end
           end
         end
       end
       puts "Flushed #{n} timers in #{t.real} seconds" if ENV["VERBOSE"]
 
-      # If it's time for the latter aggregation to be written to disk, queue
-      # those up
+      # If it's time for the latter aggregations to be written, queue those up
       @retentions.each_with_index do |retention, index|
         # First retention is always just flushed to redis on the flush interval
         next if index.zero?
-        # Only if we're in need of a write to disk - if the next flush will be
+
+        # Only if we're in need of a write - if the next flush will be
         # past the threshold
         if (flush_start + @flush_interval) > @last_flushes[retention] + retention.to_i
-          puts "Starting disk writing for timers@#{retention}" if ENV["VERBOSE"]
+          puts "Starting writing timers@#{retention}" if ENV["VERBOSE"]
           t = Benchmark.measure do 
             ts = (flush_start - flush_start % retention.to_i)
-            @timers.keys.each_slice(400) do |keys|
+            @timers.dup.keys.each_slice(400) do |keys|
               @threadpool.queue ts, keys, retention do |timestamp, keys, retention|
                 keys.each do |key|
-                  values = @redis.extract_values_from_string("#{key}:#{retention}")
+                  values = @redis.pop_for_aggregations(key, retention)
                   if values
                     values = values.collect(&:to_f)
-                    puts "Writing the aggregates for #{values.count} values for #{key} at the #{retention} level to disk." if ENV["VVERBOSE"]
                     count = values.count
+                    puts "Writing the aggregates for #{count} values for #{key} at the #{retention} level." if ENV["VVERBOSE"]
                     ["mean", "count", "min", "max", ["upper_90", "percentile_90"], ["stddev", "standard_dev"]].each do |aggregation|
                       if aggregation.is_a? Array
                         name = aggregation[0]
@@ -107,7 +105,7 @@ module Batsd
                         name = aggregation
                       end
                       val = (count > 1 ? values.send(aggregation.to_sym) : values.first)
-                      @diskstore.append_value_to_file(@diskstore.build_filename("#{key}:#{name}:#{retention}"), "#{timestamp} #{val}")
+                      @redis.store_value timestamp, "#{key}:#{name}:#{retention}", val
                     end
                   end
                 end
@@ -115,7 +113,7 @@ module Batsd
             end
             @last_flushes[retention] = flush_start
           end
-          puts "#{Time.now}: Handled disk writing for timers@#{retention} in #{t.real}" if ENV["VERBOSE"]
+          puts "#{Time.now}: Handled writing timers@#{retention} in #{t.real}" if ENV["VERBOSE"]
 
           # If this is the last retention we're handling, flush the
           # times list to redis and reset it

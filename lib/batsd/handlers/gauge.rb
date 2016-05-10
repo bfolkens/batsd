@@ -2,28 +2,25 @@ module Batsd
   #
   # Handles gauge measurements ("|g")
   #
-  # Gauge measurements are never aggregated, and are
-  # only stored on disk. They are written to disk immediately
-  # upon receipt and without manipulation beyond correcting 
-  # for sample rate (or more accurately, scale), if provided.
+  # Gauge measurements are corrected for sample rate
+  # (or more accurately, scale), if provided and written 
+  # to redis without any manipulation or collection.
   #
   class Handler::Gauge < Handler
     
     # Set up a new handler to handle gauges
     #
     # * Set up a redis client
-    # * Set up a diskstore client to write aggregates to disk
     #
     def initialize(options)
       @redis = Batsd::Redis.new(options)
-      @diskstore = Batsd::Diskstore.new(options[:root])
       super
     end
 
     # Process an incoming gauge measurement
     #
     # * Normalize for sample rate provided
-    # * Write current timestamp and value to disk
+    # * Write current timestamp and value
     # * Store the name of the datapoint in Redis 
     #
     def handle(key, value, sample_rate)
@@ -33,8 +30,7 @@ module Batsd
           value = value.to_f / sample_rate.gsub("@", "").to_f
         end
         key = "gauges:#{key}"
-        @diskstore.append_value_to_file(@diskstore.build_filename(key), "#{timestamp} #{value}")
-        @redis.store_gauge(timestamp, key, value)
+        @redis.store_value timestamp, key, value
         @redis.add_datapoint key
       end
     end
