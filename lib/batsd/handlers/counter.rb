@@ -31,7 +31,6 @@ module Batsd
 
       flush_targets(:counters, flush_start) do |timestamp, key, value|
         @redis.store_value timestamp, key, value
-        @redis.store_for_aggregations key, value
       end
       
       retain_targets(:counters, flush_start) do |timestamp, key, retention, values, count|

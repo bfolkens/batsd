@@ -79,6 +79,7 @@ module Batsd
               end
 
               yield timestamp, key, data
+              @redis.store_for_aggregations key, data
             end
           end
         end

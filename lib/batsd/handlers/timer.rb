@@ -34,7 +34,6 @@ module Batsd
         if count > 1
           @redis.store_value timestamp, "#{key}:stddev", values.standard_dev
         end
-        @redis.store_for_aggregations key, values
       end
 
       retain_targets(:timers, flush_start) do |timestamp, key, retention, values|
