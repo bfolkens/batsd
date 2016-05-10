@@ -30,7 +30,7 @@ module Batsd
     #   registered handler for the type of data provided.
     #
     def receive_data(msg)
-      ip_address = get_peername[2,6].unpack("nC4").reverse[0..3].join('.') if ENV["VVERBOSE"]
+      ip_address = get_peername[2,6].unpack("nC4")[1..4].join('.') if ENV["VVERBOSE"]
       msg.split("\n").each do |row|
         puts "received #{row} from #{ip_address}" if ENV["VVERBOSE"]
         key, value, type, sample = row.split(/\||:/)
