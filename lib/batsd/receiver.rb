@@ -29,9 +29,10 @@ module Batsd
     # * Identify the appropriate handler, or log an error if there is no
     #   registered handler for the type of data provided.
     #
-    def receive_data(msg)    
+    def receive_data(msg)
+      ip_address = get_peername[2,6].unpack("nC4").reverse[0..3].join('.') if ENV["VVERBOSE"]
       msg.split("\n").each do |row|
-        puts "received #{row}" if ENV["VVERBOSE"]
+        puts "received #{row} from #{ip_address}" if ENV["VVERBOSE"]
         key, value, type, sample = row.split(/\||:/)
         if handler = Batsd::Receiver.handlers[type.strip.to_sym]
           handler.handle(key, value, sample)
