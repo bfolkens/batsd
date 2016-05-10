@@ -12,8 +12,6 @@ module Batsd
     def initialize(options)
       @redis = ::Redis.new(options[:redis] || {host: "127.0.0.1", port: 6379} )
       @redis.ping
-      @lua_support = @redis.info['redis_version'].to_f >= 2.5
-      @retentions = options[:retentions].keys
     end
     
     # Expose the redis client directly
@@ -45,23 +43,6 @@ module Batsd
       end
     end
     
-    # Returns the value of a key and then deletes it.
-    def get_and_clear_key(key)
-      if @lua_support
-        cmd = <<-EOF
-          local str = redis.call('get', KEYS[1])
-          redis.call('del', KEYS[1])
-          return str
-        EOF
-        @redis.eval(cmd, [key.to_sym])
-      else
-        @redis.multi do |multi|
-          multi.get(key)
-          multi.del(key)
-        end.first
-      end
-    end
-
     # Deletes the given key
     def clear_key(key)
       @redis.del(key)
@@ -106,6 +87,5 @@ module Batsd
     def remove_datapoint(key)
       @redis.srem "datapoints", key
     end
-
   end
 end
