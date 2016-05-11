@@ -15,7 +15,9 @@ module Batsd
     #
     def initialize(options={})
       @redis = Batsd::Redis.new(options)
-      @threadpool = Threadpool.new(options[:threadpool_size] || 100)
+      @handle_threadpool = Threadpool.new(options[:threadpool_size] || 100)
+      @flush_threadpool = Threadpool.new(options[:threadpool_size] || 100)
+      @retain_threadpool = Threadpool.new(options[:threadpool_size] || 100)
       @statistics = {}
       @targets = {}
       @active_targets = {}
@@ -30,15 +32,27 @@ module Batsd
     # do something useful
     #
     def handle(key, value, sample_rate)
-      @threadpool.queue do
+      handle_threadpool.queue do
         puts "Received #{key} #{value} #{sample_rate}" if ENV["VVERBOSE"]
       end
     end
 
-    # Exposes the threadpool used by the handler
+    # Exposes the threadpool used by the handle methods
     #
-    def threadpool
-      @threadpool
+    def handle_threadpool
+      @handle_threadpool
+    end
+
+    # Exposes the threadpool used by the flush methods
+    #
+    def flush_threadpool
+      @flush_threadpool
+    end
+
+    # Exposes the threadpool used by the retain methods
+    #
+    def retain_threadpool
+      @retain_threadpool
     end
 
     # Provide some basic statistics about the handler. The preferred
@@ -47,8 +61,8 @@ module Batsd
     #
     def statistics
       {
-        threadpool_size: @threadpool.pool,  
-        queue_depth: @threadpool.size
+        threadpool_size: handle_threadpool.pool + flush_threadpool.pool + aggregate_threadpool.pool,
+        queue_depth: handle_threadpool.size + flush_threadpool.size + aggregate_threadpool.size
       }.merge(@statistics)
     end
 
@@ -58,7 +72,7 @@ module Batsd
     # <code>@active_targets</code> to Redis.
     #
     def flush_targets(name, flush_start = Time.now.to_i, &block)
-      puts "Current threadpool queue for #{name}: #{@threadpool.size}" if ENV["VVERBOSE"]
+      puts "Current flush threadpool queue for #{name}: #{flush_threadpool.size}" if ENV["VVERBOSE"]
 
       n = @active_targets.size
       t = Benchmark.measure do 
@@ -70,7 +84,7 @@ module Batsd
 
         # Chunk the targets and queue their aggregation and storage
         _targets.dup.each_slice(50) do |slice|
-          @threadpool.queue ts, slice do |timestamp, pairs|
+          flush_threadpool.queue ts, slice do |timestamp, pairs|
             pairs.each do |key, data|
               if data.is_a?(Array)
                 puts "Storing #{data.size} values to redis for #{key} at #{timestamp}"
@@ -79,7 +93,7 @@ module Batsd
               end if ENV["VVERBOSE"]
 
               yield timestamp, key, data
-              @redis.store_for_aggregations key, data
+              @redis.store_for_aggregations @retentions, key, data
             end
           end
         end
@@ -98,6 +112,8 @@ module Batsd
     # redis and reset
     #
     def retain_targets(name, flush_start = Time.now.to_i, &block)
+      puts "Current retain threadpool queue for #{name}: #{retain_threadpool.size}" if ENV["VVERBOSE"]
+
       # If it's time for the latter aggregations to be written, queue those up
       @retentions.each_with_index do |retention, index|
         # First retention is always just flushed to redis on the flush interval in +flush_targets+
@@ -109,7 +125,7 @@ module Batsd
           t = Benchmark.measure do 
             ts = (flush_start - flush_start % retention.to_i)
             @targets.dup.keys.each_slice(400) do |keys|
-              @threadpool.queue ts, keys, retention do |timestamp, keys, retention|
+              retain_threadpool.queue ts, keys, retention do |timestamp, keys, retention|
                 keys.each do |key|
                   values = @redis.pop_for_aggregations(key, retention)
                   if values
