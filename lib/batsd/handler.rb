@@ -19,7 +19,7 @@ module Batsd
       @flush_threadpool = Threadpool.new(options[:threadpool_size] || 100)
       @retain_threadpool = Threadpool.new(options[:threadpool_size] || 100)
       @statistics = {}
-      @targets = {}
+      @targets = Set.new
       @active_targets = {}
       @retentions = options[:retentions].keys
       @flush_interval = @retentions.first
@@ -74,14 +74,14 @@ module Batsd
     def flush_targets(name, flush_start = Time.now.to_i, &block)
       puts "Current flush threadpool queue for #{name}: #{flush_threadpool.size}" if ENV["VVERBOSE"]
 
-      n = @active_targets.size
+      # Reset the working space
+      _targets = @active_targets.dup
+      @active_targets = {}
+
+      n = _targets.size
       t = Benchmark.measure do 
         ts = (flush_start - flush_start % @flush_interval)
         
-        # Reset the working space
-        _targets = @active_targets.dup
-        @active_targets = {}
-
         # Chunk the targets and queue their aggregation and storage
         _targets.dup.each_slice(50) do |slice|
           flush_threadpool.queue ts, slice do |timestamp, pairs|
@@ -99,6 +99,7 @@ module Batsd
         end
       end
 
+      @redis.add_datapoint _targets.keys
       puts "Flushed #{n} #{name} in #{t.real} seconds" if ENV["VERBOSE"]      
     end
 
@@ -124,7 +125,7 @@ module Batsd
           puts "Starting writing #{name}@#{retention}" if ENV["VERBOSE"]
           t = Benchmark.measure do 
             ts = (flush_start - flush_start % retention.to_i)
-            @targets.dup.keys.each_slice(400) do |keys|
+            @targets.each_slice(400) do |keys|
               retain_threadpool.queue ts, keys, retention do |timestamp, keys, retention|
                 keys.each do |key|
                   values = @redis.pop_for_aggregations(key, retention)
@@ -139,16 +140,6 @@ module Batsd
             @last_flushes[retention] = flush_start
           end
           puts "#{Time.now}: Handled writing #{name}@#{retention} in #{t.real}" if ENV["VERBOSE"]
-
-          # If this is the last retention we're handling, flush the target list to redis and reset it
-          if retention == @retentions.last
-            puts "Clearing the #{name} list. Current state is: #{@targets}" if ENV["VVERBOSE"]
-            t = Benchmark.measure do 
-              @redis.add_datapoint @targets.keys
-              @targets = {}
-            end
-            puts "#{Time.now}: Flushed datapoints for #{name} in #{t.real}" if ENV["VERBOSE"]
-          end
         end
       end      
     end

@@ -20,7 +20,7 @@ module Batsd
       end
       key = "gauges:#{key}"
       @active_targets[key] = value
-      @targets[key] = nil
+      @targets << key
     end
 
     def flush

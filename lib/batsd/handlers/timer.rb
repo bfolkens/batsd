@@ -17,7 +17,7 @@ module Batsd
       if value
         @active_targets[key] ||= []
         @active_targets[key].push value.to_f
-        @targets[key] = nil
+        @targets << key
       end
     end
 
