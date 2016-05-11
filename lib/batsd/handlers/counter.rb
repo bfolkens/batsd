@@ -23,7 +23,7 @@ module Batsd
       end
       key = "counters:#{key}"
       @active_targets[key] = @active_targets[key].to_i + value.to_i
-      @targets[key] = nil
+      @targets << key
     end
 
     def flush
