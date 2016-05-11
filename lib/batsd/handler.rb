@@ -72,11 +72,11 @@ module Batsd
         _targets.dup.each_slice(50) do |slice|
           @threadpool.queue ts, slice do |timestamp, pairs|
             pairs.each do |key, data|
-              if ENV["VVERBOSE"] and data.is_a?(Array)
+              if data.is_a?(Array)
                 puts "Storing #{data.size} values to redis for #{key} at #{timestamp}"
               else
                 puts "Storing value to redis for #{key} at #{timestamp}"
-              end
+              end if ENV["VVERBOSE"]
 
               yield timestamp, key, data
               @redis.store_for_aggregations key, data
