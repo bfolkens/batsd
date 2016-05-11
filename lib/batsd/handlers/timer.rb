@@ -36,7 +36,7 @@ module Batsd
         end
       end
 
-      retain_targets(:timers, flush_start) do |timestamp, key, retention, values|
+      retain_targets(:timers, flush_start) do |timestamp, key, retention, values, count|
         values = values.collect(&:to_f)
         ["mean", "count", "min", "max", ["upper_90", "percentile_90"], ["stddev", "standard_dev"]].each do |aggregation|
           if aggregation.is_a? Array

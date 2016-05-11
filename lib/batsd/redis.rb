@@ -26,8 +26,8 @@ module Batsd
 
     # Store unaggregated, raw timer values in bucketed keys
     # so that they can actually be aggregated "raw"
-    def store_for_aggregations(key, values)
-      @retentions.each_with_index do |t, index|
+    def store_for_aggregations(retentions, key, values)
+      retentions.each_with_index do |t, index|
         next if index.zero?
         @redis.sadd "acc-#{key}:#{t}", values
         @redis.expire "acc-#{key}:#{t}", t.to_i * 2
