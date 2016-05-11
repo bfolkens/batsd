@@ -5,6 +5,7 @@ require 'bundler/setup'
 require 'yaml'
 require 'optparse'
 require 'batsd'
+$stdout.sync = true
 ENV["VERBOSE"]="1" if ENV["VVERBOSE"]
 begin
   ORIGINAL_ARGV = ARGV.dup
