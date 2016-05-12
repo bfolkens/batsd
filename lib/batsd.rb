@@ -1,6 +1,7 @@
 require 'benchmark'
 require 'eventmachine'
 require 'redis'
+require 'set'
 
 require 'core-ext/array'
 
