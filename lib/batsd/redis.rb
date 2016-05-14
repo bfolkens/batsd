@@ -21,7 +21,8 @@ module Batsd
 
     # Store a value to a zset
     def store_value(timestamp, key, value)
-      @redis.zadd key, timestamp, value
+      # Prepend the timestamp so we always have unique values
+      @redis.zadd(key, timestamp, "#{timestamp}:#{value}")
     end
 
     # Store unaggregated, raw timer values in bucketed keys
@@ -29,7 +30,7 @@ module Batsd
     def store_for_aggregations(retentions, key, values)
       retentions.each_with_index do |t, index|
         next if index.zero?
-        @redis.sadd "acc-#{key}:#{t}", values
+        @redis.lpush "acc-#{key}:#{t}", values
         @redis.expire "acc-#{key}:#{t}", t.to_i * 2
       end
     end
@@ -37,7 +38,7 @@ module Batsd
     # Pop all the raw members from the set for aggregation
     def pop_for_aggregations(key, retention)
       [].tap do |values|
-        while value = @redis.spop("acc-#{key}:#{retention}")
+        while value = @redis.rpop("acc-#{key}:#{retention}")
           values << value
         end
       end
@@ -58,7 +59,10 @@ module Batsd
     def values_from_zset(metric, begin_ts, end_ts)
       begin
         values = @redis.zrangebyscore(metric, begin_ts, end_ts, with_scores: true)
-        values.collect {|val, ts| { timestamp: ts.to_i, value: val.to_f }}
+        values.collect do |ts, point|
+          val = point.split(':').last
+          { timestamp: ts.to_i, value: val.to_f }
+        end
       rescue
         []
       end
