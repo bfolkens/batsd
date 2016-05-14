@@ -129,7 +129,7 @@ module Batsd
               retain_threadpool.queue ts, keys, retention do |timestamp, keys, retention|
                 keys.each do |key|
                   values = @redis.pop_for_aggregations(key, retention)
-                  if values
+                  unless values.nil? or values.empty?
                     count = values.count
                     puts "Writing the aggregates for #{count} values for #{key} at the #{retention} level" if ENV["VVERBOSE"]
                     yield timestamp, key, retention, values, count
