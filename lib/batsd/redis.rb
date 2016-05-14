@@ -57,14 +57,10 @@ module Batsd
 
     # Return properly formatted values from the zset
     def values_from_zset(metric, begin_ts, end_ts)
-      begin
-        values = @redis.zrangebyscore(metric, begin_ts, end_ts, with_scores: true)
-        values.collect do |ts, point|
-          val = point.split(':').last
-          { timestamp: ts.to_i, value: val.to_f }
-        end
-      rescue
-        []
+      values = @redis.zrangebyscore(metric, begin_ts, end_ts, with_scores: true)
+      values.collect do |point, ts|
+        val = point.split(':').last
+        { timestamp: ts.to_i, value: val.to_f }
       end
     end
 
